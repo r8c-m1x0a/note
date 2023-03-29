@@ -50,7 +50,7 @@ Dockerで。なお、https://gcc.gnu.org/bugzilla//show_bug.cgi?id=83670[これ]
 FROM ubuntu:22.04
 
 ENV PATH=/usr/local/m32c-elf/bin:$PATH
-ENV CXXFLAG="-g -O0"
+ENV CXXFLAGS="-g -O0"
 ENV CFLAG="-g -O0"
 ARG BIN_UTIL_VER=2.40
 ARG GCC_VER=12.2.0
