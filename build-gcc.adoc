@@ -43,7 +43,7 @@ https://people.redhat.com/dj/m32c/[これ]は、GCC 12.2.0だとかなりソー�
 
 ===＝ 再現環境
 
-Dockerで。
+Dockerで。なお、https://gcc.gnu.org/bugzilla//show_bug.cgi?id=83670[これ]を当てないとGCCのビルドができなかった。
 
 [source]
 ----
@@ -110,6 +110,11 @@ RUN \
   make && \
   make install && \
   ln -s /usr/local/m32c-elf/bin/m32c-elf-gcc /usr/local/m32c-elf/bin/m32c-elf-cc
+  
+RUN \
+  cd ~/r8c && \
+  wget ftp://sourceware.org/pub/newlib/newlib-${NEW_LIB_VER}.tar.gz && \
+  tar xf newlib-${NEW_LIB_VER}.tar.gz
 ----
 
     docker build -t r8c-gcc -f .
