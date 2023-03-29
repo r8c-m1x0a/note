@@ -1,1 +1,2 @@
 
+* [GCCのビルド](build-gcc.adoc)
