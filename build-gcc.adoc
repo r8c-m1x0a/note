@@ -41,4 +41,79 @@ https://people.redhat.com/dj/m32c/[これ]は、GCC 12.2.0だとかなりソー�
 ./gcc/reload1.cc:      error ("unable to find a register to spill in class %qs",      
 ----
 
+===＝ 再現環境
+
+Dockerで。
+
+[source]
+----
+FROM ubuntu:22.04
+
+ENV PATH=/usr/local/m32c-elf/bin:$PATH
+ENV CXXFLAG="-g -O0"
+ENV CFLAG="-g -O0"
+ARG BIN_UTIL_VER=2.40
+ARG GCC_VER=12.2.0
+ARG NEW_LIB_VER=4.1.0
+
+RUN \
+  apt-get -y update && \
+  apt-get -y install texinfo libgmp-dev libmpfr-dev libmpc-dev diffutils automake zlib1g-dev \
+    clang wget build-essential git libboost-dev scons cmake gdb doxygen lcov
+
+RUN \
+  mkdir ~/r8c && \
+  cd ~/r8c && \
+  wget https://ftp.gnu.org/gnu/binutils/binutils-${BIN_UTIL_VER}.tar.gz && \
+  tar xf binutils-${BIN_UTIL_VER}.tar.gz && \
+  cd binutils-${BIN_UTIL_VER} && \
+  mkdir m32c_build && \
+  cd m32c_build && \
+  ../configure --target=m32c-elf --prefix=/usr/local/m32c-elf --disable-nls --with-system-zlib && \
+  make && \
+  make install && \
+  cd ~/r8c
+
+RUN \
+  cd ~/r8c && \
+  wget https://ftp.gnu.org/gnu/gcc/gcc-${GCC_VER}/gcc-${GCC_VER}.tar.gz && \
+  tar xf gcc-${GCC_VER}.tar.gz && \
+  cd gcc-${GCC_VER} && \
+  cd libgcc && \
+  rm fp-bit.c; touch fp-bit.c && \
+  for i in unwind-*.c; do rm $i; touch $i; done && \
+  cd ~/r8c/gcc-${GCC_VER}/gcc/config/m32c && \
+  {  \
+     echo '--- old/m32c.cc 2022-08-19 08:09:52.648663341 +0000'; \
+     echo '+++ new/m32c.cc 2023-03-25 01:46:20.722151623 +0000'; \
+     echo '@@ -4013,9 +4013,13 @@'; \
+     echo ' m32c_leaf_function_p (void)'; \
+     echo ' {'; \
+     echo '   int rv;'; \
+     echo '+  struct sequence_stack *tem;'; \
+     echo ' '; \
+     echo '   push_topmost_sequence ();'; \
+     echo '+  tem = get_current_sequence ()->next;'; \
+     echo '+  get_current_sequence ()->next = nullptr;'; \
+     echo '   rv = leaf_function_p ();'; \
+     echo '+  get_current_sequence ()->next = tem;'; \
+     echo '   pop_topmost_sequence ();'; \
+     echo '   return rv;'; \
+     echo ' }'; \
+  } > patch.gcc && \
+  patch m32c.cc < patch.gcc && \
+  mkdir ~/r8c/gcc-${GCC_VER}/m32c_build && \
+  cd ~/r8c/gcc-${GCC_VER}/m32c_build && \
+  ../configure --prefix=/usr/local/m32c-elf --target=m32c-elf --enable-languages=c --disable-libssp --with-newlib \
+    --disable-nls --disable-threads --disable-libgomp --disable-libmudflap --disable-libstdcxx-pch --disable-multilib \
+    --enable-lto --with-system-zlib --disable-float --disable-atomic && \
+  make && \
+  make install && \
+  ln -s /usr/local/m32c-elf/bin/m32c-elf-gcc /usr/local/m32c-elf/bin/m32c-elf-cc
+----
+
+    docker build -t r8c-gcc -f .
+
+    docker run -ti r8c-gcc bash
+    #
 
