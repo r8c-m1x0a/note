@@ -120,5 +120,9 @@ RUN \
     docker build -t r8c-gcc -f .
 
     docker run -ti r8c-gcc bash
-    #
+    # cd ~/r8c/newlib-4.1.0
+    # mkdir m32c_build
+    # cd m32c_build
+    # ../configure --target=m32c-elf --prefix=/usr/local/m32c-elf
+    # make
 
