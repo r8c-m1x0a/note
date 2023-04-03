@@ -41,7 +41,7 @@ https://people.redhat.com/dj/m32c/[これ]は、GCC 12.2.0だとかなりソー�
 ./gcc/reload1.cc:      error ("unable to find a register to spill in class %qs",      
 ----
 
-===＝ 再現環境
+==== 再現環境
 
 Dockerで。なお、https://gcc.gnu.org/bugzilla//show_bug.cgi?id=83670[これ]を当てないとGCCのビルドができなかった。
 
