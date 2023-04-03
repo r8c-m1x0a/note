@@ -43,15 +43,16 @@ https://people.redhat.com/dj/m32c/[これ]は、GCC 12.2.0だとかなりソー�
 
 ===＝ 再現環境
 
-Dockerで。なお、https://gcc.gnu.org/bugzilla//show_bug.cgi?id=83670[これ]を当てないとGCCのビルドができなかった。
+Dockerで。なお、 https://gcc.gnu.org/bugzilla//show_bug.cgi?id=83670[これ] を当てないとGCCのビルドができなかった。
 
 [source]
 ----
 FROM ubuntu:22.04
 
 ENV PATH=/usr/local/m32c-elf/bin:$PATH
-ENV CXXFLAGS="-g -O0"
-ENV CFLAG="-g -O0"
+ENV CXXFLAGS="-g3 -O0"
+ENV CFLAG="-g3 -O0"
+ENV LDFLAGS=-g3
 ARG BIN_UTIL_VER=2.40
 ARG GCC_VER=12.2.0
 ARG NEW_LIB_VER=4.1.0
@@ -141,5 +142,175 @@ m32c-elf-cc -B/root/r8c/newlib-4.1.0/m32c_build/m32c-elf/newlib/ -isystem /root/
                 (const_int 18 [0x12])) [5 ptr_71(D)->_mp+0 S2 A8])) "../../../../../newlib/libc/stdlib/ldtoa.c":2805:3 95 {movhi_op}
      (nil))
 ../../../../../newlib/libc/stdlib/ldtoa.c:2936: confused by earlier errors, bailing out
+make[5]: *** [Makefile:824: lib_a-ldtoa.o] Error 1
+make[5]: Leaving directory '/root/r8c/newlib-4.1.0/m32c_build/m32c-elf/newlib/libc/stdlib'
+make[4]: *** [Makefile:683: all-recursive] Error 1
+make[4]: Leaving directory '/root/r8c/newlib-4.1.0/m32c_build/m32c-elf/newlib/libc'
+make[3]: *** [Makefile:641: all-recursive] Error 1
+make[3]: Leaving directory '/root/r8c/newlib-4.1.0/m32c_build/m32c-elf/newlib'
+make[2]: *** [Makefile:452: all] Error 2
+make[2]: Leaving directory '/root/r8c/newlib-4.1.0/m32c_build/m32c-elf/newlib'
+make[1]: *** [Makefile:8492: all-target-newlib] Error 2
+make[1]: Leaving directory '/root/r8c/newlib-4.1.0/m32c_build'
+make: *** [Makefile:879: all] Error 2
 ----
+
+gdbで読んでみる。
+
+[source]
+----
+# cd /root/r8c/newlib-4.1.0/newlib/libc/stdlib
+# gdb --args m32c-elf-cc -B/root/r8c/newlib-4.1.0/m32c_build/m32c-elf/newlib/ -isystem /root/r8c/newlib-4.1.0/m32c_build/m32c-elf/newlib/targ-include -isystem /root/r8c/newlib-4.1.0/newlib/libc/include -B/root/r8c/newlib-4.1.0/m32c_build/m32c-elf/libgloss/m32c -L/root/r8c/newlib-4.1.0/m32c_build/m32c-elf/libgloss/libnosys -L/root/r8c/newlib-4.1.0/libgloss/m32c    -DPACKAGE_NAME=\"newlib\" -DPACKAGE_TARNAME=\"newlib\" -DPACKAGE_VERSION=\"4.1.0\" -DPACKAGE_STRING=\"newlib\ 4.1.0\" -DPACKAGE_BUGREPORT=\"\" -DPACKAGE_URL=\"\" -I. -I../../../../../newlib/libc/stdlib -Os -fno-builtin -DPREFER_SIZE_OVER_SPEED -DSMALL_MEMORY -DMISSING_SYSCALL_NAMES -DABORT_PROVIDED -DHAVE_INIT_FINI      -g -O2 -c -o lib_a-ldtoa.o ldtoa.c
+
+(gdb) list reload1.cc:1
+No source file named reload1.cc.
+(gdb) dir /root/r8c/gcc-12.2.0/gcc
+Source directories searched: /root/r8c/gcc-12.2.0/gcc:$cdir:$cwd
+(gdb) list reload1.cc:1
+No source file named reload1.cc.
+(gdb) 
+quit
+
+# ls /root/r8c/gcc-12.2.0/gcc/reload1.cc
+/root/r8c/gcc-12.2.0/gcc/reload1.cc
+----
+
+なんで〜？ 
+
+とりあえずprintfデバッグするとして、gcc実行時に``-fopt-info-all=dump``を付けると情報をdumpというファイルに書き出してくれることが分かった。
+
+``reload1.cc``の``spill_failure()``でエラーメッセージが出ており、この関数が呼ばれた時点でもう失敗のようなので呼び出し元をたどると、``find_reload_regs()``の中。
+
+[source,c++]
+----
+  for (i = 0; i < n_reloads; i++)
+    {
+      int r = reload_order[i];
+
+      /* Ignore reloads that got marked inoperative.  */
+      if ((rld[r].out != 0 || rld[r].in != 0 || rld[r].secondary_p)
+          && ! rld[r].optional
+          && rld[r].regno == -1)
+        if (! find_reg (chain, i))
+          {
+            if (dump_file)
+              fprintf (dump_file, "reload failure for reload %d\n", r);
+            spill_failure (chain->insn, rld[r].rclass);
+            failure = 1;
+            return;
+          }
+    }
+----
+
+``find_reg()``を呼んで失敗している模様。``find_reg()``も同じファイル内にある。以下で始まるループ内で、``best_reg``が設定されないと失敗らしい。とりあえず以下で``printf()``デバッグ。
+
+[source,c++]
+----
+ printf("in find_reg()\n");
+  for (i = 0; i < FIRST_PSEUDO_REGISTER; i++)
+    {
+ printf("in find_reg() i = %d\n", i);
+
+#ifdef REG_ALLOC_ORDER
+      unsigned int regno = reg_alloc_order[i];
+#else
+      unsigned int regno = i;
+#endif
+
+      if (! TEST_HARD_REG_BIT (not_usable, regno)
+          && ! TEST_HARD_REG_BIT (used_by_other_reload, regno)
+          && targetm.hard_regno_mode_ok (regno, rl->mode))
+        {
+ printf("in find_reg() i = %d if \n", i);
+----
+
+実行すると以下の通り。
+
+----
+in find_reg()
+in find_reg() i = 0
+in find_reg() i = 1
+in find_reg() i = 2
+in find_reg() i = 3
+in find_reg() i = 4
+in find_reg() i = 5
+in find_reg() i = 6
+in find_reg() i = 7
+in find_reg() i = 8
+in find_reg() i = 9
+in find_reg() i = 10
+in find_reg() i = 11
+in find_reg() i = 12
+in find_reg() i = 13
+in find_reg() i = 14
+in find_reg() i = 15
+in find_reg() i = 16
+in find_reg() i = 17
+in find_reg() i = 18
+in find_reg() i = 19
+----
+
+なので、この``if``の条件を1つも満たさず終わっている。ここの``FIRST_PSEUDO_REGISTER``は、``gcc/config/m32c/m32c.h
+``に定義されている。
+
+[source,c++]
+----
+/* Register layout:                                                                                                     
+                                                                                                                        
+        [r0h][r0l]  $r0  (16 bits, or two 8-bit halves)                                                                 
+        [--------]  $r2  (16 bits)                                                                                      
+        [r1h][r1l]  $r1  (16 bits, or two 8-bit halves)                                                                 
+        [--------]  $r3  (16 bits)                                                                                      
+   [---][--------]  $a0  (might be 24 bits)                                                                             
+   [---][--------]  $a1  (might be 24 bits)                                                                             
+   [---][--------]  $sb  (might be 24 bits)                                                                             
+   [---][--------]  $fb  (might be 24 bits)                                                                             
+   [---][--------]  $sp  (might be 24 bits)                                                                             
+   [-------------]  $pc  (20 or 24 bits)                                                                                
+             [---]  $flg (CPU flags)                                                                                    
+   [---][--------]  $argp (virtual)                                                                                     
+        [--------]  $mem0 (all 16 bits)                                                                                 
+          . . .                                                                                                         
+        [--------]  $mem14                                                                                              
+*/
+
+#define FIRST_PSEUDO_REGISTER   20
+
+/* Note that these two tables are modified based on which CPU family                                                    
+   you select; see m32c_conditional_register_usage for details.  */
+
+/* r0 r2 r1 r3 - a0 a1 sb fb - sp pc flg argp - mem0..mem14 */
+#define FIXED_REGISTERS     { 0, 0, 0, 0, \
+                              0, 0, 1, 0, \
+                              1, 1, 0, 1, \
+                              0, 0, 0, 0, 0, 0, 0, 0 }
+#define CALL_USED_REGISTERS { 1, 1, 1, 1, \
+                              1, 1, 1, 0, \
+                              1, 1, 1, 1, \
+                              1, 1, 1, 1, 1, 1, 1, 1 }
+----
+
+実レジスタが20あるので``i``が0から19なのだろう。では、以下の部分の条件を調べてみる。
+
+[source,c++]
+----
+      if (! TEST_HARD_REG_BIT (not_usable, regno)
+          && ! TEST_HARD_REG_BIT (used_by_other_reload, regno)
+          && targetm.hard_regno_mode_ok (regno, rl->mode))
+----
+
+``TEST_HARD_REG_BIT``は、``gcc/hard-reg-set.h``にある。
+
+[source,c++]
+----
+#define SET_HARD_REG_BIT(SET, BIT)  \
+ ((SET) |= HARD_CONST (1) << (BIT))
+#define CLEAR_HARD_REG_BIT(SET, BIT)  \
+ ((SET) &= ~(HARD_CONST (1) << (BIT)))
+#define TEST_HARD_REG_BIT(SET, BIT)  \
+ (!!((SET) & (HARD_CONST (1) << (BIT))))
+----
+
+ビットセットのようだ。
+
 
